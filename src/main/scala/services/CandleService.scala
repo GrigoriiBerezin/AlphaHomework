@@ -20,14 +20,17 @@ object CandleService {
   private final case class StockCandleService() extends CandleService {
 
     override def barsFromTrades(trades: UStream[Trade], interval: Long): UStream[Bar] = trades
-      .scan[Option[Bar]](None) { case (acc, trade) =>
-        val curBar = acc.getOrElse(Bar.byOneTrade(trade, interval))
-        if (trade.time < curBar.time + interval) Some(curBar.copy(
-          end = trade.price,
-          low = Math.min(curBar.low, trade.price),
-          high = Math.max(curBar.high, trade.price)
-        ))
-        else Some(Bar.byOneTrade(trade, interval))
+      .groupByKey(trade => (trade.time / interval) * interval) {
+        case (_, trades) => ZStream.fromZIO(trades.runFold[Option[Bar]](None) {
+          case (acc, trade) =>
+            val curBar = acc.getOrElse(Bar.byOneTrade(trade, interval))
+            if (trade.time < curBar.time + interval) Some(curBar.copy(
+              end = trade.price,
+              low = Math.min(curBar.low, trade.price),
+              high = Math.max(curBar.high, trade.price)
+            ))
+            else Some(Bar.byOneTrade(trade, interval))
+        })
       }.collect { case Some(bar) => bar }
       .debug
 
